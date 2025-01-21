@@ -1,0 +1,177 @@
+// Classe principal do catálogo LiterAlura
+import java.io.IOException;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.Scanner;
+import org.json.JSONArray;
+import org.json.JSONObject;
+import java.sql.*;
+
+public class CatalogoLiterAlura {
+
+    // URL base da API Gutendex
+    private static final String GUTENDEX_API_URL = "https://gutendex.com/books";
+
+    // Método principal
+    public static void main(String[] args) {
+        try {
+            inicializarBanco(); // Configurar o banco de dados
+            exibirMenu(); // Exibir o menu interativo
+        } catch (Exception e) {
+            System.out.println("Erro: " + e.getMessage());
+        }
+    }
+
+    // Configuração inicial do banco de dados
+    private static void inicializarBanco() throws SQLException {
+        String url = "jdbc:sqlite:catalogo.db"; // Banco SQLite
+        try (Connection conn = DriverManager.getConnection(url)) {
+            String criarTabela = "CREATE TABLE IF NOT EXISTS livros (" +
+                                 "id INTEGER PRIMARY KEY, " +
+                                 "titulo TEXT, " +
+                                 "autor TEXT, " +
+                                 "lingua TEXT, " +
+                                 "ano TEXT);";
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute(criarTabela);
+            }
+        }
+    }
+
+    // Exibe o menu principal
+    private static void exibirMenu() throws IOException, SQLException {
+        Scanner scanner = new Scanner(System.in);
+        int opcao;
+
+        do {
+            System.out.println("Bem-vindo ao LiterAlura!");
+            System.out.println("1. Buscar livros por título");
+            System.out.println("2. Buscar livros por autor");
+            System.out.println("3. Listar livros no catálogo");
+            System.out.println("4. Adicionar livros ao banco de dados");
+            System.out.println("5. Sair");
+            System.out.print("Escolha uma opção: ");
+            opcao = scanner.nextInt();
+            scanner.nextLine();
+
+            switch (opcao) {
+                case 1:
+                    System.out.print("Digite o título para busca: ");
+                    String titulo = scanner.nextLine();
+                    buscarLivrosAPI("title=" + titulo);
+                    break;
+                case 2:
+                    System.out.print("Digite o nome do autor: ");
+                    String autor = scanner.nextLine();
+                    buscarLivrosAPI("author=" + autor);
+                    break;
+                case 3:
+                    listarLivrosBanco();
+                    break;
+                case 4:
+                    System.out.print("Digite o termo de busca para adicionar livros: ");
+                    String termo = scanner.nextLine();
+                    buscarLivrosAPI(termo, true);
+                    break;
+                case 5:
+                    System.out.println("Saindo...");
+                    break;
+                default:
+                    System.out.println("Opção inválida.");
+            }
+        } while (opcao != 5);
+    }
+
+    // Realiza a busca na API Gutendex
+    private static void buscarLivrosAPI(String query) throws IOException {
+        buscarLivrosAPI(query, false);
+    }
+
+    private static void buscarLivrosAPI(String query, boolean salvarNoBanco) throws IOException {
+        String url = GUTENDEX_API_URL + "?" + query;
+        HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
+        connection.setRequestMethod("GET");
+        connection.connect();
+
+        if (connection.getResponseCode() == 200) {
+            Scanner scanner = new Scanner(connection.getInputStream());
+            StringBuilder resposta = new StringBuilder();
+
+            while (scanner.hasNext()) {
+                resposta.append(scanner.nextLine());
+            }
+            scanner.close();
+
+            processarRespostaAPI(resposta.toString(), salvarNoBanco);
+        } else {
+            System.out.println("Erro ao acessar a API.");
+        }
+    }
+
+    // Processa a resposta da API
+    private static void processarRespostaAPI(String json, boolean salvarNoBanco) {
+        JSONObject jsonObject = new JSONObject(json);
+        JSONArray livros = jsonObject.getJSONArray("results");
+
+        for (int i = 0; i < livros.length(); i++) {
+            JSONObject livro = livros.getJSONObject(i);
+            String titulo = livro.getString("title");
+            String autor = livro.getJSONArray("authors").length() > 0
+                          ? livro.getJSONArray("authors").getJSONObject(0).getString("name")
+                          : "Autor desconhecido";
+            String lingua = livro.getJSONArray("languages").length() > 0
+                          ? livro.getJSONArray("languages").getString(0)
+                          : "Idioma desconhecido";
+            String ano = livro.optString("copyright_year", "Ano desconhecido");
+
+            if (salvarNoBanco) {
+                salvarLivroNoBanco(titulo, autor, lingua, ano);
+            } else {
+                System.out.println("Título: " + titulo);
+                System.out.println("Autor: " + autor);
+                System.out.println("Língua: " + lingua);
+                System.out.println("Ano: " + ano);
+                System.out.println("---------------------------");
+            }
+        }
+    }
+
+    // Salva livro no banco de dados
+    private static void salvarLivroNoBanco(String titulo, String autor, String lingua, String ano) {
+        String url = "jdbc:sqlite:catalogo.db";
+        String inserirLivro = "INSERT INTO livros (titulo, autor, lingua, ano) VALUES (?, ?, ?, ?);";
+
+        try (Connection conn = DriverManager.getConnection(url);
+             PreparedStatement pstmt = conn.prepareStatement(inserirLivro)) {
+            pstmt.setString(1, titulo);
+            pstmt.setString(2, autor);
+            pstmt.setString(3, lingua);
+            pstmt.setString(4, ano);
+            pstmt.executeUpdate();
+            System.out.println("Livro salvo: " + titulo);
+        } catch (SQLException e) {
+            System.out.println("Erro ao salvar livro: " + e.getMessage());
+        }
+    }
+
+    // Lista os livros salvos no banco
+    private static void listarLivrosBanco() {
+        String url = "jdbc:sqlite:catalogo.db";
+        String selecionarLivros = "SELECT * FROM livros;";
+
+        try (Connection conn = DriverManager.getConnection(url);
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(selecionarLivros)) {
+
+            while (rs.next()) {
+                System.out.println("Título: " + rs.getString("titulo"));
+                System.out.println("Autor: " + rs.getString("autor"));
+                System.out.println("Língua: " + rs.getString("lingua"));
+                System.out.println("Ano: " + rs.getString("ano"));
+                System.out.println("---------------------------");
+            }
+        } catch (SQLException e) {
+            System.out.println("Erro ao listar livros: " + e.getMessage());
+        }
+    }
+}
